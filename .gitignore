@@ -1,0 +1,30 @@
+# ======================
+# Secrets & Environment
+# ======================
+.env
+*.env
+
+# ======================
+# Python
+# ======================
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# ======================
+# Skyfield cache files
+# (downloaded automatically when fetching TLE data)
+# ======================
+*.bsp
+finals2000A.all
+
+# ======================
+# Editor & OS
+# ======================
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
