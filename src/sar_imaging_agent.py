@@ -18,6 +18,7 @@ Requirements:
 import anthropic
 import json
 import requests
+import os
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from utils import print_tool_result, print_separator, get_api_key
@@ -25,22 +26,6 @@ from utils import print_tool_result, print_separator, get_api_key
 load_dotenv()
 
 client = anthropic.Anthropic(api_key=get_api_key())
-
-
-# -------------------------------------------------------
-# CITY COORDINATES (lat, lon)
-# -------------------------------------------------------
-CITY_COORDS = {
-    "helsinki":  (60.1699, 25.0384),
-    "tokyo":     (35.6762, 139.6503),
-    "london":    (51.5074, -0.1278),
-    "new york":  (40.7128, -74.0060),
-    "dubai":     (25.2048, 55.2708),
-    "oslo":      (59.9139, 10.7522),
-    "stockholm": (59.3293, 18.0686),
-    "warsaw":    (52.2297, 21.0122),
-}
-
 
 # -------------------------------------------------------
 # TOOL DEFINITIONS
@@ -61,20 +46,31 @@ tools = [
         }
     },
     {
-        "name": "get_satellite_passes",
-        "description": (
-            "Get the next real satellite pass times over a city using live TLE "
-            "orbital data from Celestrak. Returns upcoming passes within 24 hours "
-            "with max elevation and pass duration."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "city": {"type": "string", "description": "The city name"}
+    "name": "get_satellite_passes",
+    "description": (
+        "Get the next real satellite pass times over a location using live TLE "
+        "orbital data from Celestrak. Returns upcoming passes within 24 hours "
+        "with max elevation and pass duration."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "lat": {
+                "type": "number",
+                "description": "Latitude of the location"
             },
-            "required": ["city"]
-        }
-    },
+            "lon": {
+                "type": "number",
+                "description": "Longitude of the location"
+            },
+            "city": {
+                "type": "string",
+                "description": "City name, used for labelling the result"
+            }
+        },
+        "required": ["lat", "lon", "city"]
+    }
+},
     {
         "name": "assess_imaging_window",
         "description": (
@@ -115,35 +111,40 @@ tools = [
 
 def get_weather(city: str) -> dict:
     """
-    Simulated weather with realistic cloud cover values.
-    In production, swap for a live API e.g. OpenWeatherMap.
+    Fetches live weather data from OpenWeatherMap API.
+    Returns temperature, conditions, cloud cover and daylight status.
     """
-    fake_weather = {
-        "helsinki":  {"temp_c": 4,  "condition": "Cloudy with light rain", "cloud_cover_pct": 85, "wind_kmh": 15},
-        "tokyo":     {"temp_c": 25, "condition": "Sunny and warm",         "cloud_cover_pct": 10, "wind_kmh": 8},
-        "london":    {"temp_c": 11, "condition": "Overcast",               "cloud_cover_pct": 90, "wind_kmh": 20},
-        "new york":  {"temp_c": 15, "condition": "Partly cloudy",          "cloud_cover_pct": 40, "wind_kmh": 12},
-        "dubai":     {"temp_c": 38, "condition": "Hot and sunny",          "cloud_cover_pct": 5,  "wind_kmh": 5},
-        "oslo":      {"temp_c": 3,  "condition": "Snow showers",           "cloud_cover_pct": 95, "wind_kmh": 18},
-        "stockholm": {"temp_c": 6,  "condition": "Mostly cloudy",          "cloud_cover_pct": 75, "wind_kmh": 14},
-        "warsaw":    {"temp_c": 9,  "condition": "Partly cloudy",          "cloud_cover_pct": 45, "wind_kmh": 11},
+    api_key = os.environ.get("OPENWEATHERMAP_API_KEY")
+    if not api_key:
+        raise EnvironmentError(
+            "OPENWEATHERMAP_API_KEY not set. Add it to your .env file."
+        )
+
+    resp = requests.get(
+        "https://api.openweathermap.org/data/2.5/weather",
+        params={"q": city, "appid": api_key, "units": "metric"},
+        timeout=5
+    )
+
+    if resp.status_code == 404:
+        return {"error": f"City '{city}' not found in OpenWeatherMap"}
+    if resp.status_code != 200:
+        return {"error": f"Weather API error: {resp.status_code}"}
+
+    data = resp.json()
+
+    return {
+        "temp_c": round(data["main"]["temp"], 1),
+        "condition": data["weather"][0]["description"].capitalize(),
+        "cloud_cover_pct": data["clouds"]["all"],
+        "wind_kmh": round(data["wind"]["speed"] * 3.6, 1),
+        "is_daylight": data["dt"] < data["sys"]["sunset"] and data["dt"] > data["sys"]["sunrise"],
+        "lat": data["coord"]["lat"],
+        "lon": data["coord"]["lon"],
     }
 
-    data = fake_weather.get(city.lower(), {
-        "temp_c": 20,
-        "condition": f"Partly cloudy in {city}",
-        "cloud_cover_pct": 35,
-        "wind_kmh": 10
-    })
 
-    # Determine daylight based on UTC hour (simplified: 06:00-18:00 UTC)
-    utc_hour = datetime.now(timezone.utc).hour
-    data["is_daylight"] = 6 <= utc_hour <= 18
-
-    return data
-
-
-def get_satellite_passes(city: str) -> dict:
+def get_satellite_passes(lat: float, lon: float, city: str) -> dict:
     """
     Fetches live TLE orbital data from Celestrak and computes real
     satellite pass times using the SGP4 propagator model via skyfield.
@@ -153,15 +154,6 @@ def get_satellite_passes(city: str) -> dict:
     """
     try:
         from skyfield.api import load, wgs84, EarthSatellite
-
-        coords = CITY_COORDS.get(city.lower())
-        if not coords:
-            return {
-                "error": f"City '{city}' not in database.",
-                "tip": f"Known cities: {', '.join(CITY_COORDS.keys())}"
-            }
-
-        lat, lon = coords
 
         # Fetch live TLE data from Celestrak (no auth required)
         resp = requests.get(
@@ -239,7 +231,6 @@ def get_satellite_passes(city: str) -> dict:
         return {"error": "skyfield not installed. Run: pip install -r requirements.txt"}
 
     except Exception as e:
-        # Graceful fallback with simulated data if network or parse fails
         import random
         minutes = random.randint(15, 90)
         return {
@@ -348,7 +339,11 @@ def run_tool(tool_name: str, tool_input: dict) -> str:
     if tool_name == "get_weather":
         result = get_weather(tool_input["city"])
     elif tool_name == "get_satellite_passes":
-        result = get_satellite_passes(tool_input["city"])
+        result = get_satellite_passes(
+            tool_input["lat"],
+            tool_input["lon"],
+            tool_input["city"]
+        )
     elif tool_name == "assess_imaging_window":
         result = assess_imaging_window(
             tool_input["cloud_cover_pct"],
@@ -437,26 +432,20 @@ def agent(user_message: str) -> str:
 # -------------------------------------------------------
 if __name__ == "__main__":
     print("\n🛰️  SAR Imaging Intelligence Agent")
-    print("   Live orbital data via Celestrak TLE + skyfield SGP4\n")
+    print("   Live weather via OpenWeatherMap · Orbital data via Celestrak + skyfield")
+    print("   Type a city or location query, or 'exit' to quit.\n")
+    print("   Example queries:")
+    print("   → Is now a good time to image Helsinki?")
+    print("   → Compare imaging windows for London and Dubai")
+    print("   → When is the next viable pass over Tokyo?\n")
 
-    # --- Single query mode ---
-    questions = [
-        "Is now a good time to image Helsinki? Give me a full SAR vs optical assessment.",
-        # "Compare imaging windows for London and Dubai — which is better right now?",
-        # "When is the next viable imaging pass over Tokyo?",
-    ]
-
-    for q in questions:
-        result = agent(q)
+    while True:
+        user_input = input("Analyst: ").strip()
+        if not user_input:
+            continue
+        if user_input.lower() in ["exit", "quit"]:
+            print("\nShutting down agent. Goodbye! 🛰️")
+            break
+        result = agent(user_input)
         print(f"\n🤖 Agent: {result}\n")
         print_separator()
-
-    # --- Interactive mode (uncomment to enable) ---
-    # print("\n💬 Interactive mode (type 'exit' to quit)\n")
-    # while True:
-    #     user_input = input("Analyst: ").strip()
-    #     if user_input.lower() in ["exit", "quit"]:
-    #         break
-    #     if user_input:
-    #         result = agent(user_input)
-    #         print(f"\n🤖 Agent: {result}\n")
