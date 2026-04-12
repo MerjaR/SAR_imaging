@@ -71,7 +71,7 @@ def main():
         print(f"❌ API error: {e}")
         sys.exit(1)
 
-    print("\n✅ All good! Your ICEYE agent is ready to run. 🛰️")
+    print("\n✅ All good! Your agent is ready to run. 🛰️")
 
 
 if __name__ == "__main__":
