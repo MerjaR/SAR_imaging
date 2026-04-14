@@ -1,5 +1,5 @@
 """
-Shared utilities for the workshop tasks.
+Shared utilities for the agent.
 """
 
 import json

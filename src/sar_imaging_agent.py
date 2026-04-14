@@ -25,6 +25,11 @@ from utils import print_tool_result, print_separator, get_api_key
 
 load_dotenv()
 
+MODEL = os.getenv("MODEL_NAME")
+
+if not MODEL:
+    raise EnvironmentError("MODEL_NAME not set in .env")
+
 client = anthropic.Anthropic(api_key=get_api_key())
 
 # -------------------------------------------------------
@@ -149,7 +154,7 @@ def get_satellite_passes(lat: float, lon: float, city: str) -> dict:
     Fetches live TLE orbital data from Celestrak and computes real
     satellite pass times using the SGP4 propagator model via skyfield.
 
-    Uses the ISS as a representative LEO satellite — similar orbital
+    Uses the ISS as a representative LEO satellite for demo purposes — similar orbital
     altitude (~400km) to many Earth observation constellations.
     """
     try:
@@ -231,18 +236,9 @@ def get_satellite_passes(lat: float, lon: float, city: str) -> dict:
         return {"error": "skyfield not installed. Run: pip install -r requirements.txt"}
 
     except Exception as e:
-        import random
-        minutes = random.randint(15, 90)
         return {
-            "city": city,
-            "next_pass": {
-                "rise_utc": (datetime.now(timezone.utc) + timedelta(minutes=minutes)).strftime("%H:%M UTC"),
-                "minutes_until_pass": minutes,
-                "duration_seconds": random.randint(300, 600),
-                "max_elevation_deg": round(random.uniform(15, 75), 1),
-            },
-            "note": f"Live TLE fetch failed ({e}), using simulated fallback",
-            "data_source": "simulated"
+            "error": f"Live TLE fetch failed: {str(e)}",
+            "details": str(e)
         }
 
 
@@ -393,9 +389,9 @@ def agent(user_message: str) -> str:
 
     messages = [{"role": "user", "content": user_message}]
 
-    while True:
+    for _ in range(5):
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=MODEL,
             max_tokens=1024,
             system=SYSTEM_PROMPT,
             tools=tools,
