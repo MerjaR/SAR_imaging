@@ -71,7 +71,9 @@ Create a `.env` file in the root of the repository with the following keys:
 ```
 ANTHROPIC_API_KEY=your-anthropic-api-key-here
 OPENWEATHERMAP_API_KEY=your-openweathermap-api-key-here
+MODEL_NAME=claude-sonnet-4-20250514
 ```
+- **MODEL_NAME** — the Claude model used by the agent. Defaults to a valid Sonnet model if not set, but you can change this to experiment with different models.
 
 **Getting your API keys:**
 
